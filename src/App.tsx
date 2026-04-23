@@ -313,7 +313,7 @@ export default function App() {
               <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <Stat
                   label="Resource version"
-                  value={summary.version ?? '-'}
+                  value={summary.version ?? '—'}
                 />
                 <Stat label="Tags" value={String(summary.tagCount)} />
                 <Stat label="Variables (macros)" value={String(summary.macroCount)} />
@@ -322,7 +322,7 @@ export default function App() {
                 <div className="rounded-xl border border-basalt-800/90 bg-basalt-900/30 p-4 sm:col-span-2 lg:col-span-1">
                   <p className="text-xs font-medium text-basalt-100/60">Bytes loaded</p>
                   <p className="mt-1 font-mono text-2xl text-basalt-50">
-                    {raw ? `${(raw.length / 1024).toFixed(1)} KB` : '-'}
+                    {raw ? `${(raw.length / 1024).toFixed(1)} KB` : '—'}
                   </p>
                 </div>
               </div>
@@ -420,7 +420,7 @@ function TrackingReadout({ insights }: { insights: TagTrackingInsight[] }) {
           Firing rules are inferred from the public <code className="font-mono text-ember-300/95">rules</code> and{' '}
           <code className="font-mono text-ember-300/95">predicates</code> in <code className="font-mono text-ember-300/95">gtm.js</code>. “If”
           lists are <strong className="text-basalt-50">OR</strong> (any match). “Except when” is an UNLESS block. Consent,
-          tag sequencing, and server containers are not fully represented here. Use GTM for edge cases.
+          tag sequencing, and server containers are not fully represented here—use GTM for edge cases.
         </p>
       </div>
 
@@ -440,7 +440,7 @@ function TrackingReadout({ insights }: { insights: TagTrackingInsight[] }) {
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h3 className="font-display text-lg text-basalt-50">
-                  Tag ID {ins.gtmTagId ?? '-'}{" "}
+                  Tag ID {ins.gtmTagId ?? '—'}{" "}
                   <span className="text-basalt-100/70">·</span>{' '}
                   <span className="font-sans text-base font-medium text-ember-300/95">{ins.typeLabel}</span>
                 </h3>
