@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   cleanGtmData,
   getResource,
@@ -27,6 +27,8 @@ function asRecordArray(x: unknown): Record<string, unknown>[] {
   return x.filter((i): i is Record<string, unknown> => i !== null && typeof i === 'object')
 }
 
+const LS_LAST_ID = 'tag-foundry:last-id'
+
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
@@ -35,6 +37,31 @@ function downloadJson(filename: string, data: unknown) {
   a.download = filename
   a.click()
   URL.revokeObjectURL(url)
+}
+
+function syncIdToUrl(id: string) {
+  const u = new URL(window.location.href)
+  u.searchParams.set('id', id)
+  window.history.replaceState({}, '', u)
+}
+
+function rowSummaryTag(row: Record<string, unknown>): string {
+  const fn = typeof row.function === 'string' ? row.function : '—'
+  const tid = row.tag_id ?? row.tagId
+  if (tid != null) return `${fn} · id ${String(tid)}`
+  return fn
+}
+
+function rowSummaryPredicate(row: Record<string, unknown>, i: number): string {
+  const fn = typeof row.function === 'string' ? row.function : 'predicate'
+  return `${fn} · #${i}`
+}
+
+function rowSummaryMacro(row: Record<string, unknown>, i: number): string {
+  const fn = typeof row.function === 'string' ? row.function : 'macro'
+  const name = row.vtp_name
+  if (typeof name === 'string' && name.trim()) return `${fn} · ${name}`
+  return `${fn} · #${i}`
 }
 
 const tabs: { id: Tab; label: string; hint: string }[] = [
@@ -51,8 +78,32 @@ const tabs: { id: Tab; label: string; hint: string }[] = [
   { id: 'json', label: 'Export', hint: 'Copy or download JSON' },
 ]
 
+function initialContainerIdFromEnv(): string {
+  if (typeof window === 'undefined') return 'GTM-XXXXX'
+  try {
+    const u = new URL(window.location.href)
+    const fromUrl = u.searchParams.get('id')?.trim().toUpperCase()
+    if (fromUrl && isValidContainerId(fromUrl)) {
+      return fromUrl
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const s = localStorage.getItem(LS_LAST_ID)
+    if (s && isValidContainerId(s)) {
+      return s
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'GTM-XXXXX'
+}
+
 export default function App() {
-  const [containerId, setContainerId] = useState('GTM-XXXXX')
+  const [containerId, setContainerId] = useState(initialContainerIdFromEnv)
+  const [loadedPublicId, setLoadedPublicId] = useState<string | null>(null)
+  const [copyCleanStatus, setCopyCleanStatus] = useState<'idle' | 'ok' | 'err'>('idle')
   const [paste, setPaste] = useState('')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -102,6 +153,13 @@ export default function App() {
       const text = await r.text()
       try {
         runParse(text)
+        setLoadedPublicId(id)
+        try {
+          localStorage.setItem(LS_LAST_ID, id)
+        } catch {
+          /* ignore */
+        }
+        syncIdToUrl(id)
       } catch (e) {
         if (e instanceof GtmError) {
           setErr(e.message)
@@ -121,6 +179,14 @@ export default function App() {
     if (!paste.trim()) {
       setErr('Paste the full gtm.js response, or the “var data = {…}” section.')
       return
+    }
+    setLoadedPublicId(null)
+    try {
+      const u = new URL(window.location.href)
+      u.searchParams.delete('id')
+      window.history.replaceState({}, '', u)
+    } catch {
+      /* ignore */
     }
     try {
       runParse(paste)
@@ -151,10 +217,45 @@ export default function App() {
   const tagRows = asRecordArray(resource?.tags)
   const predRows = asRecordArray(resource?.predicates)
   const macroRows = asRecordArray(resource?.macros)
-  const rules = Array.isArray(resource?.rules) ? resource?.rules : []
+  const rules = useMemo(
+    () => (Array.isArray(resource?.rules) ? resource?.rules : []),
+    [resource]
+  )
+  const rulesRowsFiltered = useMemo(() => {
+    if (!q.trim()) return rules
+    const s = q.toLowerCase()
+    return rules.filter((r) => JSON.stringify(r).toLowerCase().includes(s))
+  }, [rules, q])
+  const exportNameBase = loadedPublicId
+    ? `tag-foundry-${loadedPublicId.replace(/[^A-Z0-9-]/gi, '')}`
+    : 'tag-foundry'
+
+  const getPredicateSummary = useCallback(
+    (r: Record<string, unknown>, j: number) => {
+      const o = predRows.indexOf(r)
+      return rowSummaryPredicate(r, o === -1 ? j : o)
+    },
+    [predRows]
+  )
+  const getMacroSummary = useCallback(
+    (r: Record<string, unknown>, j: number) => {
+      const o = macroRows.indexOf(r)
+      return rowSummaryMacro(r, o === -1 ? j : o)
+    },
+    [macroRows]
+  )
+
+  useEffect(() => {
+    if (copyCleanStatus !== 'ok') return
+    const t = window.setTimeout(() => setCopyCleanStatus('idle'), 2200)
+    return () => clearTimeout(t)
+  }, [copyCleanStatus])
 
   return (
     <div className="min-h-svh text-basalt-100">
+      <a className="skip-to-main" href="#container-main">
+        Skip to content
+      </a>
       <header className="border-b border-basalt-800/80 bg-basalt-900/50 backdrop-blur-sm">
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
           <p className="font-mono text-xs tracking-[0.2em] text-ember-300/90">
@@ -174,7 +275,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <main id="container-main" className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <section
           className="rounded-2xl border border-basalt-800/90 bg-basalt-900/40 p-5 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset] sm:p-7"
           aria-labelledby="ingest-title"
@@ -184,7 +285,14 @@ export default function App() {
           </h2>
           <p className="mt-2 text-sm text-basalt-100/75">
             Fetches the same public file the browser loads for your site. If your network blocks
-            the proxy, paste the script body instead.
+            the proxy, paste the script body instead.{' '}
+            <span className="text-basalt-100/50">
+              Tip: <kbd className="rounded border border-basalt-600 bg-basalt-800/80 px-1 font-mono text-xs">Enter</kbd>{' '}
+              fetches;{' '}
+              <kbd className="rounded border border-basalt-600 bg-basalt-800/80 px-1 font-mono text-xs">⌘/Ctrl</kbd> +{' '}
+              <kbd className="rounded border border-basalt-600 bg-basalt-800/80 px-1 font-mono text-xs">Enter</kbd> parses
+              a paste.
+            </span>
           </p>
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -198,6 +306,12 @@ export default function App() {
                   className="w-full min-w-[12rem] flex-1 rounded-lg border border-basalt-700 bg-basalt-950/80 px-3 py-2.5 font-mono text-sm text-basalt-50 outline-none ring-0 transition focus:border-copper-500/80 focus:ring-2 focus:ring-copper-500/25"
                   value={containerId}
                   onChange={(e) => setContainerId(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !loading) {
+                      e.preventDefault()
+                      void onLoadFromId()
+                    }
+                  }}
                   autoComplete="off"
                   spellCheck={false}
                   placeholder="GTM-XXXXXXX"
@@ -224,6 +338,12 @@ export default function App() {
               className="mt-1.5 w-full resize-y rounded-lg border border-basalt-700 bg-basalt-950/60 px-3 py-2 font-mono text-xs leading-relaxed text-basalt-100/90 outline-none focus:border-copper-500/80 focus:ring-2 focus:ring-copper-500/25"
               value={paste}
               onChange={(e) => setPaste(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  onParsePaste()
+                }
+              }}
               placeholder="/* Copyright Google … */  var data = { …"
             />
             <div className="mt-2 flex flex-wrap gap-2">
@@ -241,7 +361,15 @@ export default function App() {
                     setData(null)
                     setRaw(null)
                     setErr(null)
+                    setLoadedPublicId(null)
                     setTab('overview')
+                    try {
+                      const u = new URL(window.location.href)
+                      u.searchParams.delete('id')
+                      window.history.replaceState({}, '', u)
+                    } catch {
+                      /* ignore */
+                    }
                   }}
                   className="rounded-lg px-3 py-2 text-sm text-basalt-100/70 hover:text-basalt-50"
                 >
@@ -264,15 +392,23 @@ export default function App() {
         {data && clean ? (
           <>
             <div className="mt-8 flex flex-col gap-3 border-b border-basalt-800/80 pb-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Container sections">
+              <div
+                className="flex flex-wrap gap-1.5"
+                id="gtm-section-tabs"
+                role="tablist"
+                aria-label="Container sections"
+              >
                 {tabs.map((t) => {
                   const active = tab === t.id
                   return (
                     <button
                       key={t.id}
                       type="button"
+                      id={`tab-${t.id}`}
                       role="tab"
                       aria-selected={active}
+                      aria-controls={`panel-${t.id}`}
+                      tabIndex={active ? 0 : -1}
                       className={[
                         'rounded-full px-3.5 py-1.5 text-sm font-medium transition',
                         active
@@ -280,6 +416,26 @@ export default function App() {
                           : 'bg-basalt-800/50 text-basalt-100/80 hover:bg-basalt-800',
                       ].join(' ')}
                       onClick={() => setTab(t.id)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+                        e.preventDefault()
+                        const i = tabs.findIndex((x) => x.id === tab)
+                        if (e.key === 'ArrowRight' && i < tabs.length - 1) {
+                          const next = tabs[i + 1]!.id
+                          setTab(next)
+                          setTimeout(
+                            () => document.getElementById(`tab-${next}`)?.focus(),
+                            0
+                          )
+                        } else if (e.key === 'ArrowLeft' && i > 0) {
+                          const next = tabs[i - 1]!.id
+                          setTab(next)
+                          setTimeout(
+                            () => document.getElementById(`tab-${next}`)?.focus(),
+                            0
+                          )
+                        }
+                      }}
                       title={t.hint}
                     >
                       {t.label}
@@ -304,13 +460,25 @@ export default function App() {
             <p className="mt-2 text-xs text-basalt-100/50">{tabs.find((t) => t.id === tab)?.hint}</p>
 
             {tab === 'tracking' ? (
-              <TrackingReadout
-                insights={trackingInsights.filter(filterTracking)}
-              />
+              <div
+                role="tabpanel"
+                id="panel-tracking"
+                aria-labelledby="tab-tracking"
+                className="outline-none"
+              >
+                <TrackingReadout
+                  insights={trackingInsights.filter(filterTracking)}
+                />
+              </div>
             ) : null}
 
             {tab === 'overview' ? (
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div
+                role="tabpanel"
+                id="panel-overview"
+                aria-labelledby="tab-overview"
+                className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+              >
                 <Stat
                   label="Resource version"
                   value={summary.version ?? '—'}
@@ -329,33 +497,62 @@ export default function App() {
             ) : null}
 
             {tab === 'tags' ? (
-              <JsonList rows={tagRows.filter(filterStr)} empty="No tags in this snapshot." />
+              <div role="tabpanel" id="panel-tags" aria-labelledby="tab-tags">
+                <JsonList
+                  rows={tagRows.filter(filterStr)}
+                  getSummary={rowSummaryTag}
+                  filterActive={!!q.trim()}
+                  empty="No tags in this snapshot."
+                  emptyFiltered="No tags match this filter."
+                />
+              </div>
             ) : null}
             {tab === 'predicates' ? (
-              <JsonList
-                rows={predRows.filter(filterStr)}
-                empty="No predicates in this snapshot."
-              />
+              <div role="tabpanel" id="panel-predicates" aria-labelledby="tab-predicates">
+                <JsonList
+                  rows={predRows.filter(filterStr)}
+                  getSummary={getPredicateSummary}
+                  filterActive={!!q.trim()}
+                  empty="No predicates in this snapshot."
+                  emptyFiltered="No predicates match this filter."
+                />
+              </div>
             ) : null}
             {tab === 'macros' ? (
-              <JsonList
-                rows={macroRows.filter(filterStr)}
-                empty="No macros in this snapshot."
-              />
+              <div role="tabpanel" id="panel-macros" aria-labelledby="tab-macros">
+                <JsonList
+                  rows={macroRows.filter(filterStr)}
+                  getSummary={getMacroSummary}
+                  filterActive={!!q.trim()}
+                  empty="No macros in this snapshot."
+                  emptyFiltered="No macros match this filter."
+                />
+              </div>
             ) : null}
             {tab === 'rules' ? (
-              <div className="mt-4 rounded-xl border border-basalt-800/80 bg-basalt-950/30 p-3">
-                <pre className="max-h-[min(60vh,640px)] overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-basalt-100/90">
-                  {JSON.stringify(rules, null, 2)}
-                </pre>
+              <div role="tabpanel" id="panel-rules" aria-labelledby="tab-rules">
+                <div className="mt-4 rounded-xl border border-basalt-800/80 bg-basalt-950/30 p-3">
+                  <pre className="max-h-[min(60vh,640px)] overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-basalt-100/90">
+                    {rulesRowsFiltered.length > 0
+                      ? JSON.stringify(rulesRowsFiltered, null, 2)
+                      : q.trim() && rules.length > 0
+                        ? 'No rules match this filter.'
+                        : JSON.stringify(rules, null, 2)}
+                  </pre>
+                </div>
               </div>
             ) : null}
             {tab === 'json' ? (
-              <div className="mt-4 space-y-3">
+              <div
+                role="tabpanel"
+                id="panel-json"
+                aria-labelledby="tab-json"
+                className="mt-4 space-y-3"
+              >
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => downloadJson('tag-foundry-clean.json', clean)}
+                    onClick={() => downloadJson(`${exportNameBase}-clean.json`, clean)}
                     className="rounded-lg bg-copper-500 px-3 py-2 text-sm font-semibold text-basalt-950 hover:bg-copper-400"
                   >
                     Download clean snapshot
@@ -364,7 +561,7 @@ export default function App() {
                     type="button"
                     onClick={() =>
                       resource
-                        ? downloadJson('tag-foundry-resource.json', resource)
+                        ? downloadJson(`${exportNameBase}-resource.json`, resource)
                         : undefined
                     }
                     className="rounded-lg border border-basalt-600 bg-basalt-800/40 px-3 py-2 text-sm font-medium text-basalt-50 hover:bg-basalt-800"
@@ -374,15 +571,23 @@ export default function App() {
                   <button
                     type="button"
                     onClick={async () => {
+                      setErr(null)
+                      setCopyCleanStatus('idle')
                       try {
                         await navigator.clipboard.writeText(JSON.stringify(clean, null, 2))
+                        setCopyCleanStatus('ok')
                       } catch {
+                        setCopyCleanStatus('err')
                         setErr('Clipboard not available in this context.')
                       }
                     }}
                     className="rounded-lg px-3 py-2 text-sm text-basalt-100/80 hover:text-basalt-50"
                   >
-                    Copy clean JSON
+                    {copyCleanStatus === 'ok'
+                      ? 'Copied!'
+                      : copyCleanStatus === 'err'
+                        ? 'Copy failed — retry'
+                        : 'Copy clean JSON'}
                   </button>
                 </div>
                 <div className="rounded-xl border border-basalt-800/80 bg-basalt-950/30 p-3">
@@ -511,22 +716,69 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-function JsonList({ rows, empty }: { rows: Record<string, unknown>[]; empty: string }) {
+function rowStableKey(
+  row: Record<string, unknown>,
+  i: number,
+  summary: (r: Record<string, unknown>, idx: number) => string
+): string {
+  const t = (row.function as string) ?? 'fn'
+  return `${t}-${summary(row, i).slice(0, 64)}-${i}`
+}
+
+function JsonList({
+  rows,
+  empty,
+  emptyFiltered,
+  getSummary,
+  filterActive = false,
+}: {
+  rows: Record<string, unknown>[]
+  empty: string
+  emptyFiltered?: string
+  getSummary: (r: Record<string, unknown>, i: number) => string
+  filterActive?: boolean
+}) {
   if (!rows.length) {
-    return <p className="mt-6 text-sm text-basalt-100/55">{empty}</p>
+    return (
+      <p className="mt-6 text-sm text-basalt-100/55">
+        {filterActive && emptyFiltered ? emptyFiltered : empty}
+      </p>
+    )
   }
   return (
     <ul className="mt-4 space-y-2">
-      {rows.map((row, i) => (
-        <li
-          key={i}
-          className="rounded-xl border border-basalt-800/80 bg-basalt-950/25 p-3"
-        >
-          <pre className="max-h-48 overflow-auto font-mono text-xs leading-relaxed text-basalt-100/90">
-            {JSON.stringify(row, null, 2)}
-          </pre>
-        </li>
-      ))}
+      {rows.map((row, i) => {
+        const summary = getSummary(row, i)
+        const k = rowStableKey(row, i, getSummary)
+        return (
+          <li
+            key={k}
+            className="group rounded-xl border border-basalt-800/80 bg-basalt-950/25 p-3"
+          >
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0 font-mono text-xs text-ember-300/95 [overflow-wrap:anywhere]">
+                {summary}
+              </p>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(JSON.stringify(row, null, 2))
+                  } catch {
+                    /* no-op: browser may block clipboard in insecure contexts */
+                  }
+                }}
+                className="shrink-0 self-end rounded border border-basalt-600 bg-basalt-800/50 px-2.5 py-1 text-xs font-medium text-basalt-200/90 opacity-100 transition hover:border-basalt-500 hover:text-basalt-50 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
+              >
+                Copy
+              </button>
+            </div>
+            <pre className="mt-2 max-h-48 overflow-auto font-mono text-xs leading-relaxed text-basalt-100/90">
+              {JSON.stringify(row, null, 2)}
+            </pre>
+          </li>
+        )
+      })}
     </ul>
   )
 }
