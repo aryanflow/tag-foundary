@@ -36,8 +36,8 @@ const GTM_BUILTIN_EVENTS: Record<string, string> = {
   'gtm.consent': 'Consent update',
   'gtm.dom': 'DOM ready',
   'gtm.load': 'Window loaded',
-  'gtm.click': 'All element clicks (Click — All elements)',
-  'gtm.linkClick': 'Link clicks (just links)' ,
+  'gtm.click': 'All element clicks (Click, all elements)',
+  'gtm.linkClick': 'Link clicks (just links)',
   'gtm.formSubmit': 'Form submit',
   'gtm.formStart': 'Form start',
   'gtm.historyChange': 'History / SPA route change',
@@ -103,7 +103,7 @@ const PRED_FN: Record<string, string> = {
 }
 
 function str(v: unknown): string {
-  if (v == null) return '—'
+  if (v == null) return '-'
   if (typeof v === 'string') return v
   if (typeof v === 'number' || typeof v === 'boolean') return String(v)
   try {
@@ -162,7 +162,7 @@ export function describePredicate(
 
   if (fn === '_eq') {
     if (left === 'Event name (GTM)' && typeof arg1 === 'string') {
-      return `Event is “${arg1}” — ${describeEventValue(arg1)}`
+      return `Event is “${arg1}”: ${describeEventValue(arg1)}`
     }
     if (String(left).toLowerCase().includes('url') && typeof arg1 === 'string') {
       return `${pFn} (${left}): “${arg1}”`
@@ -181,7 +181,7 @@ export function describePredicate(
   if (fn === '_css' || fn === 'css' || (fn as string) === 'css') {
     return `Element matches CSS ${right}`
   }
-  return `Predicate #${index}: ${fn} — ${left} vs “${right}”`
+  return `Predicate #${index}: ${fn} (${left} vs “${right}”)`
 }
 
 export function parseRuleChain(
@@ -227,7 +227,7 @@ function oneLineSummary(
         ? describe(ifOr[0]!)
         : ifOr.map(describe).join('  OR  ')
   if (unless.length === 0) return orPart
-  return `${orPart}  —  except when: ${unless.map(describe).join(' or ')}`
+  return `${orPart}; except when: ${unless.map(describe).join(' or ')}`
 }
 
 function buildScenarios(
